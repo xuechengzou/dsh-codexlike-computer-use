@@ -1,0 +1,17 @@
+# 构建与测试产物
+lib/
+.build-staging/
+test/helpers/*.json
+
+# 依赖目录：只放可随时重建的联接——开发依赖的联接，以及 scripts/link-doubles.mjs
+# 为测试建立的替身联接。都不进版本库。
+# 注意测试替身的**源码**在 test/doubles/（必须提交，克隆下来要靠它跑测试）；
+# 这里的 node_modules/ 只匹配名为 node_modules 的目录，不会波及 test/doubles/。
+node_modules/
+
+# 编辑器与系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.log

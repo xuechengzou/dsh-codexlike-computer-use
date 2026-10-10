@@ -1,0 +1,10 @@
+{
+  "name": "koffi",
+  "version": "0.0.0-test-stub",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  }
+}
