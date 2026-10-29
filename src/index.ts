@@ -20,7 +20,7 @@ import type { ComputerUseService } from './contracts.js';
 import { registerComputerUsePrompt } from './prompt.js';
 import { registerStateRoute } from './route.js';
 import { createState } from './state.js';
-import { registerToolIndicator } from './tool-indicator.js';
+import { registerTurnIndicator } from './turn-indicator.js';
 import { registerTools } from './tools.js';
 
 export { Config };
@@ -94,8 +94,8 @@ export function apply(ctx: Context, rawConfig?: ConfigValues): (() => Promise<vo
 	registerTools(ctx, config, state);
 	registerComputerUsePrompt(ctx);
 
-	// 屏幕边框：工具执行期间亮，执行完淡出
-	const disposeIndicator = registerToolIndicator(ctx);
+	// 屏幕边框：computer use 活动期间常亮（每次调用续期），回合结束立刻熄灭
+	const disposeIndicator = registerTurnIndicator(ctx);
 
 	// 状态路由必须**等 webServer 就位**再注册。
 	//

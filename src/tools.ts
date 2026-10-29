@@ -17,6 +17,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConfigValues } from './config.js';
 import type { StateStore } from './state.js';
+import { touchOverlay } from './overlay.js';
 import { readWindowNodes } from './uia/index.js';
 import { createSnapshotStore } from './uia/snapshot.js';
 import { formatWalked, type WalkedNode } from './uia/tree.js';
@@ -192,6 +193,8 @@ export function registerTools(ctx: Context, config: ConfigValues, state: StateSt
 		isConcurrencySafe: () => false,
 
 		async execute(args: ObserveArgs, exec: RunContext): Promise<ComputerValue> {
+		// 屏幕指示器：computer use 活动开始，并重置熄灭倒计时
+		touchOverlay();
 			if (args.target === 'windows') {
 				if (args.tree === true) throw new Error('tree 只对单个窗口有效：先用 {"target":"windows"} 选一个窗口，再带该句柄调用');
 				return await runComputerAction({ action: 'window', limit: args.limit }, exec, ctx, config, captures);
@@ -272,6 +275,8 @@ export function registerTools(ctx: Context, config: ConfigValues, state: StateSt
 		isConcurrencySafe: () => false,
 
 		async execute(args: ActArgs, exec: RunContext): Promise<ComputerValue> {
+		// 屏幕指示器：computer use 活动开始，并重置熄灭倒计时
+		touchOverlay();
 			if (args.element !== undefined) {
 				if (args.snapshot === undefined) {
 					throw new Error('元素级动作需要 snapshot：先用 computer_observe 带 tree:true 观察该窗口，结果里有 snapshot 与 [eN] 节点 id');

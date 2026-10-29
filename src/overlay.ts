@@ -47,6 +47,19 @@ const FADE_MS = 500;
 /** 当前持有者数量：多个 agent 同时跑时，最后一个释放才熄灭。 */
 let holders = 0;
 
+/**
+ * 熄灭宽限期（毫秒）。
+ *
+ * computer use 的两次调用之间通常夹着模型思考，间隔从几百毫秒到几秒不等。
+ * 只要在这段时间内又来了下一次调用就保持常亮；超过则认为"后面不会再用了"。
+ * 这是对"下一次操作是否还用插件"的**经验性预判**，不是真预测——
+ * 但它只需要一个参数，且失效时表现为"灯晚灭 2.5 秒"，代价很小。
+ */
+const LINGER_MS = 2500;
+
+/** 宽限计时器。 */
+let linger: ReturnType<typeof setTimeout> | undefined;
+
 let frame: Frame | undefined;
 let pending: Promise<Frame | undefined> | undefined;
 
@@ -203,6 +216,38 @@ function ensureTicking(current: Frame): void {
 		current.phase = 150 + 70 * (0.5 + 0.5 * Math.sin(Date.now() / 260));
 		current.setAlpha(Math.round(current.phase));
 	}, TICK_MS);
+	// 动画不该拖住宿主进程/测试进程退出
+	if (typeof current.timer.unref === 'function') current.timer.unref();
+}
+
+/**
+ * 一次 computer use 活动：点亮并把熄灭倒计时重置。
+ *
+ * 与 `holdOverlay` 的区别：`holdOverlay` 是"必须显式 release"的成对语义，
+ * `touchOverlay` 是"自动续期"的语义，用于"连续使用期间常亮"。
+ */
+export function touchOverlay(): void {
+	if (linger !== undefined) {
+		clearTimeout(linger);
+		linger = undefined;
+	}
+	holdOverlay();
+	linger = setTimeout(() => {
+		linger = undefined;
+		releaseOverlay();
+	}, LINGER_MS);
+	if (typeof linger.unref === 'function') linger.unref();
+}
+
+/**
+ * 立刻熄灭（回合结束时调用，不等宽限期）。
+ */
+export function forceHideOverlay(): void {
+	if (linger !== undefined) {
+		clearTimeout(linger);
+		linger = undefined;
+	}
+	holders = 0;
 }
 
 /**

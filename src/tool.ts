@@ -26,6 +26,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '@deepseek-ai/cordis';
+import { touchOverlay } from './overlay.js';
 import { captureWindowBgra, type WindowCapture } from './capture-window.js';
 import { assertImageCapableRoute } from './capability.js';
 import type { AgentLike, ApprovalService, AttachmentService, LlmService } from './contracts.js';
@@ -757,6 +758,8 @@ export async function runComputerAction(
 	config: ConfigValues,
 	captures: Map<string, BackgroundCapture>,
 ): Promise<ComputerValue> {
+	touchOverlay();
+
 	const win32 = await loadWin32();
 	const before = foregroundInfo(win32);
 
