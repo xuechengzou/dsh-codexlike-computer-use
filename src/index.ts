@@ -18,7 +18,10 @@ import type { Context } from '@deepseek-ai/cordis';
 import { assertConfig, Config, type ConfigValues } from './config.js';
 import type { ComputerUseService } from './contracts.js';
 import { registerComputerUsePrompt } from './prompt.js';
-import { registerComputerTool } from './tool.js';
+import { registerStateRoute } from './route.js';
+import { createState } from './state.js';
+import { registerToolIndicator } from './tool-indicator.js';
+import { registerTools } from './tools.js';
 
 export { Config };
 
@@ -65,18 +68,49 @@ function reserveComputerUseSlot(ctx: Context): SlotReservation {
  * @param config - 经 schema 解析的配置。
  * @returns 卸载时释放 provider 槽位的清理函数。
  */
-export function apply(ctx: Context, config: ConfigValues): (() => Promise<void>) | undefined {
+export function apply(ctx: Context, rawConfig?: ConfigValues): (() => Promise<void>) | undefined {
+	/**
+	 * 自己补齐默认值，不假定宿主已经做过。
+	 *
+	 * 宿主的 Loader 只在认得这份 schema 时才替插件解析配置；插件的 schemastery
+	 * 来自 profile 的 node_modules，与宿主内那份是两个模块实例，认不出来时
+	 * `apply` 收到的就是 `undefined`，随后 `assertConfig` 抛错、整条 fiber 停在
+	 * `failed`（实测报错：`Cannot read properties of undefined (reading
+	 * 'typingChunkSize')`）。
+	 *
+	 * Schema 本身是可调用的：`Config({})` 按 schema 补齐默认值。因此这里无论宿主
+	 * 传没传、传得全不全，都收敛成一份完整配置。
+	 */
+	const config = Config(rawConfig ?? {}) as ConfigValues;
 	assertConfig(config);
 	if (!config.enabled) return undefined;
 
 	const slot = reserveComputerUseSlot(ctx);
 	if (!slot.ok) return undefined;
 
-	registerComputerTool(ctx, config);
+	// 运行时模式：Config 只提供初值，界面可以随时改它，工具执行时读同一份
+	const state = createState({ inputMode: config.inputMode, allowInput: config.allowInput });
+
+	registerTools(ctx, config, state);
 	registerComputerUsePrompt(ctx);
 
+	// 屏幕边框：工具执行期间亮，执行完淡出
+	const disposeIndicator = registerToolIndicator(ctx);
+
+	// 状态路由必须**等 webServer 就位**再注册。
+	//
+	// 实测踩过：apply 只等 tools / systemPrompt，这两个服务比 webServer 早得多，
+	// 于是 apply 时 ctx.get('webServer') 是 undefined，路由被静默跳过——面板拿
+	// 状态时得到 404。用 ctx.inject 起一个等依赖就位的子 fiber 才是正确时机。
+	let disposeRoute: (() => void) | undefined;
+	ctx.inject(['webServer'], (scope: Context) => {
+		disposeRoute = registerStateRoute(scope, state);
+	});
+
 	return async () => {
-		// 工具与提示词段落的处置由 ctx 的生命周期负责；这里只归还槽位
+		// 工具与提示词段落的处置由 ctx 的生命周期负责；这里只清掉自己注册的路由
+		disposeIndicator();
+		disposeRoute?.();
 		await slot.release?.();
 	};
 }

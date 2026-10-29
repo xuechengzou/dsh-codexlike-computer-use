@@ -54,10 +54,29 @@ async function exists(path) {
 	}
 }
 
+/**
+ * 递归枚举可编译入口。
+ *
+ * 早期只读 src 顶层，`src/uia/com.ts` 这类子目录模块会被静默漏掉——构建成功、
+ * 产物缺失，直到宿主里 `import './uia/com.js'` 才炸。遍历必须跟着目录走下去。
+ *
+ * @param directory - 目录绝对路径。
+ * @param prefix - 相对 src 的前缀（用于 outbase 保持目录结构）。
+ * @returns 相对路径清单。
+ */
+async function listSources(directory, prefix = '') {
+	const found = [];
+	for (const entry of await readdir(directory, { withFileTypes: true })) {
+		const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+		if (entry.isDirectory()) found.push(...await listSources(join(directory, entry.name), relative));
+		else found.push(relative);
+	}
+	return found.sort();
+}
+
 /** 动态枚举入口：避免硬编码清单与 src 漂移。声明文件不是可编译入口。 */
-const entries = (await readdir(sourceDirectory))
-	.filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts'))
-	.sort();
+const entries = (await listSources(sourceDirectory))
+	.filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts'));
 if (entries.length === 0) throw new Error('src 下没有可编译的 TypeScript 入口');
 
 // 暂存目录必须和 lib 同卷：跨卷 rename 会以 EXDEV 失败，
@@ -79,7 +98,7 @@ try {
 		logLevel: 'info',
 	});
 
-	const produced = await readdir(staging);
+	const produced = (await listSources(staging)).filter((file) => file.endsWith('.js'));
 	const expected = entries.map((file) => file.replace(/\.ts$/u, '.js'));
 	const missing = expected.filter((file) => !produced.includes(file));
 	if (missing.length > 0) throw new Error(`构建产物缺少 ${missing.join(', ')}`);

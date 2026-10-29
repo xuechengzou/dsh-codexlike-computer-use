@@ -117,7 +117,7 @@ const INPUT_ACTIONS = new Set<ComputerAction>([
 const KEYBOARD_ACTIONS = new Set<ComputerAction>(['type', 'key', 'hold_key']);
 
 /** 一次工具调用收到的原始参数。 */
-interface ComputerArgs {
+export interface ComputerArgs {
 	action: ComputerAction;
 	x?: number;
 	y?: number;
@@ -138,7 +138,7 @@ interface ComputerArgs {
 }
 
 /** 工具执行上下文里本插件用到的部分。 */
-interface RunContext {
+export interface RunContext {
 	readonly callId: string;
 	readonly signal: AbortSignal;
 	readonly agent?: AgentLike;
@@ -162,7 +162,7 @@ interface BackgroundDelivery {
 }
 
 /** 工具输出值；`render` 只依赖它，保持可重放。 */
-interface ComputerValue {
+export interface ComputerValue {
 	action: string;
 	summary: string;
 	cursor?: { x: number; y: number };
@@ -177,6 +177,24 @@ interface ComputerValue {
 	windows?: WindowSummary[];
 	/** 后台截图抓的是哪个窗口（与 `windows` 的条目同形）。 */
 	window?: WindowSummary;
+	/** 动作作用的可访问性元素（元素级动作才有）。 */
+	element?: { id: string; line: string };
+	/** 元素级动作走的 pattern 名称。 */
+	pattern?: string;
+	/** 这次动作是否改变了前台窗口。 */
+	foregroundChanged?: boolean;
+	/** 需要模型停下来向用户复述的警告。 */
+	warnings?: string[];
+	/** 本次观察建立的快照 id。 */
+	snapshot?: string;
+	/** 可访问性树（缩进文本）。 */
+	tree?: string;
+	/** 树里实际输出了多少节点。 */
+	treeNodes?: number;
+	/** 树读取失败的原因（成功时不出现）。 */
+	treeError?: string;
+	/** 树是否因上限被截断。 */
+	treeTruncated?: boolean;
 	/** 后台输入动作的投递结果。 */
 	background?: BackgroundDelivery;
 }
@@ -275,7 +293,7 @@ const BACKGROUND_SCHEMA = {
  * 之下，代码里多返回一个 schema 没写的字段，宿主会直接以
  * "is not a declared property" 拒绝整次调用。
  */
-const OUTPUT_SCHEMA = {
+export const OUTPUT_SCHEMA = {
 	type: 'object',
 	additionalProperties: false,
 	properties: {
@@ -292,6 +310,19 @@ const OUTPUT_SCHEMA = {
 		windows: { type: 'array', items: WINDOW_ENTRY_SCHEMA },
 		window: WINDOW_ENTRY_SCHEMA,
 		background: BACKGROUND_SCHEMA,
+		foregroundChanged: { type: 'boolean' },
+		warnings: { type: 'array', items: { type: 'string' } },
+		snapshot: { type: 'string' },
+		pattern: { type: 'string' },
+		element: {
+			type: 'object',
+			additionalProperties: false,
+			properties: { id: { type: 'string', required: true }, line: { type: 'string', required: true } },
+		},
+		tree: { type: 'string' },
+		treeNodes: { type: 'integer' },
+		treeTruncated: { type: 'boolean' },
+		treeError: { type: 'string' },
 	},
 } as const;
 
@@ -469,7 +500,7 @@ function windowListAction(config: ConfigValues, args: ComputerArgs, win32: Win32
 		: [
 			`${entries.length} of ${matched} window(s) listed that accept background operations. Pass a handle back verbatim as \`target\` (you do not need to interpret it); the \`window\` action itself never moves the cursor or changes focus:`,
 			...rows,
-			'Background mode supports screenshot, left_click, right_click, middle_click and type.',
+			'Pass a handle to computer_observe to capture that window (screenshot, optionally tree:true), and to computer_act as `target` for window-mode input.',
 		].join('\n');
 
 	return { action: 'window', summary, windows: entries };
@@ -525,7 +556,7 @@ function resolveBackgroundTarget(win32: Win32, args: ComputerArgs): TargetWindow
  * 不做淘汰：一条记录只有几十字节，而"客户区尺寸对不上就当没有"这条判据已经
  * 兜住了句柄被复用、窗口被改尺寸这两种陈旧记录的唯一危险来源。
  */
-interface BackgroundCapture {
+export interface BackgroundCapture {
 	readonly mapping: CaptureMapping;
 	readonly client: ClientArea;
 }
@@ -681,38 +712,105 @@ export function registerComputerTool(ctx: Context, config: ConfigValues): void {
 
 		output: {
 			schema: OUTPUT_SCHEMA,
-			render: (_args: unknown, value: ComputerValue) => {
-				const blocks: Array<Record<string, unknown>> = [];
-				if (value.image !== undefined && value.region !== undefined && value.desktop !== undefined && value.scale !== undefined) {
-					const shell: ScreenshotValue = {
-						image: value.image,
-						region: value.region,
-						desktop: value.desktop,
-						scale: value.scale,
-						cursor: value.cursor ?? { x: 0, y: 0 },
-						elapsedMs: value.elapsedMs ?? 0,
-						downscaleRetries: value.downscaleRetries ?? 0,
-					};
-					blocks.push({
-						type: 'text',
-						// 后台截图报的是客户区坐标，外壳必须换一份，否则模型会按屏幕坐标去点
-						text: value.window === undefined
-							? formatScreenshot(shell)
-							: formatWindowScreenshot({ ...shell, window: value.window }),
-					});
-					blocks.push({ type: 'image', attachment: imageRefFromValue(value.image) });
-					return blocks;
-				}
-				blocks.push({ type: 'text', text: value.summary });
-				return blocks;
-			},
+			render: (_args: unknown, value: ComputerValue) => renderComputerValue(value),
 			presentationMeta: (_args: unknown, value: ComputerValue) => ({ action: value.action, summary: value.summary }),
 		},
 
 		isConcurrencySafe: () => false,
 
 		async execute(args: ComputerArgs, exec: RunContext): Promise<ComputerValue> {
-			const win32: Win32 = await loadWin32();
+			return await runComputerAction(args, exec, ctx, config, captures);
+		},
+
+		presentCall(args: ComputerArgs) {
+			const kind = args.action === 'window' || args.action === 'screenshot' || args.action === 'cursor_position' ? 'read' : 'execute';
+			return { card: 'generic', title: describeCall(args), kind, rawInput: args };
+		},
+	});
+
+	ctx.tools.register(tool);
+}
+
+/**
+ * 执行一次桌面动作，并补上两条**事后诊断**。
+ *
+ * 为什么单独包一层：
+ * - `foregroundChanged`：前台模式最难察觉的副作用就是"焦点被抢走了"。只有对比
+ *   动作前后的前台窗口句柄才说得清，而每个动作分支都自己比较一遍必然漏。
+ * - **自指警告**：目标窗口属于 DSH 自己时（用户就是在跟宿主界面交互），动作可能
+ *   改到发起这次调用的界面本身。策略允许这么做，但必须让模型看见并停下来复述，
+ *   否则它会在自己的审批按钮上连点。
+ *
+ * 诊断失败绝不影响动作结果：读不到前台窗口时只是不报告，不抛错。
+ *
+ * @param args - 动作参数。
+ * @param exec - 宿主执行上下文。
+ * @param ctx - 插件上下文。
+ * @param config - 已解析配置。
+ * @param captures - 后台截图映射。
+ * @returns 动作结果（带诊断字段）。
+ */
+export async function runComputerAction(
+	args: ComputerArgs,
+	exec: RunContext,
+	ctx: Context,
+	config: ConfigValues,
+	captures: Map<string, BackgroundCapture>,
+): Promise<ComputerValue> {
+	const win32 = await loadWin32();
+	const before = foregroundInfo(win32);
+
+	const value = await executeComputerAction(args, exec, ctx, config, captures);
+
+	const after = foregroundInfo(win32);
+	value.foregroundChanged = after?.handle !== before?.handle;
+	// 结构化字段模型看不到（render 只输出 summary 与内容块），
+	// 所以"前台被抢走"这件事必须同时写进摘要，否则等于没报告。
+	if (value.foregroundChanged === true) {
+		value.summary = `${value.summary} Note: the foreground window changed — focus was taken from whatever the user was doing.`;
+	}
+
+	if (INPUT_ACTIONS.has(args.action)) {
+		let targetHandle: bigint | undefined;
+		if (args.target !== undefined) {
+			try {
+				targetHandle = BigInt(args.target);
+			} catch {
+				targetHandle = undefined;
+			}
+		} else {
+			targetHandle = before?.handle;
+		}
+		const targetPid = targetHandle === undefined ? undefined : win32.windowInfo(targetHandle)?.processId;
+		if (targetPid !== undefined && targetPid === process.pid) {
+			value.warnings = ['目标窗口属于 DSH 自身：这次动作可能改变了宿主界面（例如点到了自己的按钮或输入框）。'];
+			value.summary = `⚠ ${value.warnings[0]} ${value.summary}`;
+		}
+	}
+
+	return value;
+}
+
+/**
+ * 执行一次桌面动作。
+ *
+ * 从 `computer` 工具的执行体提出来：**同一份动作语义**现在供
+ * `computer_observe` / `computer_act` 以及一份为测试保留的旧注册路径共用。
+ * 复制体一旦分叉，"窗口模式不动光标"这类承诺就会在两条路径里给出不同结果。
+ *
+ * @param args - 旧式动作参数（新工具负责把自己那套参数映射成它）。
+ * @param exec - 宿主的工具执行上下文。
+ * @param ctx - 插件上下文，用于解析可选服务。
+ * @param config - 已解析配置。
+ * @param captures - 后台目标的截图映射；由调用方的工具实例持有。
+ */
+async function executeComputerAction(
+	args: ComputerArgs,
+	exec: RunContext,
+	ctx: Context,
+	config: ConfigValues,
+	captures: Map<string, BackgroundCapture>,
+): Promise<ComputerValue> {			const win32: Win32 = await loadWin32();
 
 			if (INPUT_ACTIONS.has(args.action) && !config.allowInput) {
 				throw new Error('computer-use 的输入模拟已被配置关闭（allowInput: false）；当前只能执行 window、screenshot、cursor_position 和 wait');
@@ -781,15 +879,49 @@ export function registerComputerTool(ctx: Context, config: ConfigValues): void {
 			}
 
 			return await inputAction(config, args, win32);
-		},
+}
 
-		presentCall(args: ComputerArgs) {
-			const kind = args.action === 'window' || args.action === 'screenshot' || args.action === 'cursor_position' ? 'read' : 'execute';
-			return { card: 'generic', title: describeCall(args), kind, rawInput: args };
-		},
-	});
-
-	ctx.tools.register(tool);
+/**
+ * 把输出值渲染成模型可见的内容块。
+ *
+ * 与执行体同理：渲染只有一份，观察工具与动作工具的结果外壳不会各说各话。
+ *
+ * @param value - 工具输出值。
+ * @returns 内容块数组。
+ */
+export function renderComputerValue(value: ComputerValue): Array<Record<string, unknown>> {
+		const blocks: Array<Record<string, unknown>> = [];
+				if (value.image !== undefined && value.region !== undefined && value.desktop !== undefined && value.scale !== undefined) {
+					const shell: ScreenshotValue = {
+						image: value.image,
+						region: value.region,
+						desktop: value.desktop,
+						scale: value.scale,
+						cursor: value.cursor ?? { x: 0, y: 0 },
+						elapsedMs: value.elapsedMs ?? 0,
+						downscaleRetries: value.downscaleRetries ?? 0,
+					};
+					blocks.push({
+						type: 'text',
+						// 后台截图报的是客户区坐标，外壳必须换一份，否则模型会按屏幕坐标去点
+						text: value.window === undefined
+							? formatScreenshot(shell)
+							: formatWindowScreenshot({ ...shell, window: value.window }),
+					});
+					// 快照 id 与可访问性树必须**和截图一起**给模型：
+					// 少了 id，元素级动作无从引用；少了树，模型只能靠像素猜控件。
+					if (value.snapshot !== undefined) {
+						blocks.push({ type: 'text', text: `snapshot=${value.snapshot}: pass it as "snapshot" together with an [eN] id from the tree below when calling computer_act with "element".` });
+					}
+					if (value.tree !== undefined) blocks.push({ type: 'text', text: value.tree });
+					// 树读不到时必须让模型看见原因：截图分支不渲染 summary，
+					// 把失败写进 summary 等于静默失败。
+					if (value.treeError !== undefined) blocks.push({ type: 'text', text: `Accessibility tree unavailable: ${value.treeError}` });
+					blocks.push({ type: 'image', attachment: imageRefFromValue(value.image) });
+					return blocks;
+				}
+				blocks.push({ type: 'text', text: value.summary });
+				return blocks;
 }
 
 /** 生成工具卡片标题。 */

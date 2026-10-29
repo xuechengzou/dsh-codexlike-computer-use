@@ -15,7 +15,12 @@
  */
 
 declare module '@deepseek-ai/schemastery' {
+	/**
+	 * 宿主的 schema 是**可调用对象**：`Config(value)` 返回补齐默认值后的结果。
+	 * 这一点在宿主里实测过，也是插件自己补默认值的依据（见 index.ts）。
+	 */
 	export interface SchemaLike {
+		(value?: unknown): unknown;
 		default(value: unknown): SchemaLike;
 	}
 	export interface SchemaFactory {
@@ -85,5 +90,12 @@ declare module '@deepseek-ai/cordis' {
 		};
 		/** 解析可选服务。 */
 		get(name: string): unknown;
+		/**
+		 * 起一个等依赖就位的子 fiber：服务尚未挂载时回调不会执行，挂载后才跑。
+		 * 注册路由这类"必须等 webServer 就位"的动作靠它定时机。
+		 */
+		inject(deps: string[], callback: (ctx: Context) => void): unknown;
+		/** 监听宿主事件（emit 模式）。 */
+		on(event: string, listener: (payload: unknown) => void): () => void;
 	}
 }

@@ -5,6 +5,41 @@
 注册一个 `computer` 工具（截图 + 鼠标 + 键盘）、一段系统提示词，并占用宿主的 computer-use provider 槽位。
 适用场景是**没有命令行或文件路径可走的图形目标**——操作 GUI 应用、点界面上的按钮、填写非脚本化的表单。
 
+## 当前形态（v2：两件套）
+
+> 下面「工具：`computer`」一节是 v1 的单工具形态，保留是因为其中的**实测结论**
+> （PrintWindow 边界、Chromium 渲染子窗口、焦点等待、坐标换算链）仍然全部适用。
+> 插件当前注册的是两个工具。
+
+**`computer_observe`** —— 只读，永不动光标：
+
+| 参数 | 说明 |
+| --- | --- |
+| `target: "windows"` | 列出可操作的顶层窗口（handle/title/kind/rect/minimized） |
+| `target: "<handle>"` | 用 PrintWindow 抓该窗口；可加 `tree:true` 附带可访问性树 |
+| 省略 `target` | 抓屏幕，可用 `region` 限定矩形 |
+| `tree` | 带回 UIA 控制树（缩进文本、`[eN]` 节点 id、节点/深度上限），并建立 `snapshot` |
+
+**`computer_act`** —— 会改变机器，受当前输入模式约束：
+
+| 动作 | 说明 |
+| --- | --- |
+| `click / double_click / right_click / middle_click` | 坐标点击；带 `element` 时改走 Invoke |
+| `type / press / hold` | 文本与组合键；带 `element` 时改走 Value.SetValue |
+| `toggle / select` | 仅元素级（Toggle / SelectionItem pattern） |
+| `move / drag / scroll / wait` | 光标、拖拽、滚轮、等待 |
+
+输入模式三态：`window`（默认，必须带 `target`）、`foreground`（真实鼠标键盘）、
+`both`。模式由**用户在界面上**决定，模型不能自己切换：
+
+- 设置页：Settings → Computer Use（模式、是否允许模拟输入、当前状态）
+- 输入框左侧的紧凑切换按钮：不翻设置页也能换
+- HTTP 面：`GET/POST /dsh-computer-use/state`（同源校验）
+
+**元素级动作与快照失效**：`tree:true` 观察后返回 `snapshot: "s1"` 与 `[e12]` 形式的节点 id。
+动作前会比对控件类型、名字与包围盒；任一变化即报 `stale` 并要求重新观察——
+不会照着旧快照再点一次。快照最多保留 3 份、5 分钟过期，淘汰与卸载都会释放 COM 引用。
+
 ## 安装
 
 本插件是标准的 DSH bundle 插件，`package.json` 声明了 `dsh.bundle.patch`。

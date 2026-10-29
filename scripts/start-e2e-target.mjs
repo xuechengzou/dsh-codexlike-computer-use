@@ -43,8 +43,11 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
 		const state = JSON.parse(readFileSync(OUT, 'utf8'));
 		// 客户区尺寸为 0 说明窗口被最小化或还没显示——不能当成"就绪"，
 		// 否则后面的后台截图会拿到空白帧，把启动问题误判成功能问题。
-		if (state.hwnd && state.rect?.width > 0 && state.rect?.height > 0) {
-			console.log(`靶窗口就绪: form=${state.form} button=${state.button} box=${state.box}`);
+		// 靶脚本报的是各控件的句柄（form/button/box），没有单独的 hwnd 字段；
+		// 表单句柄就是这扇窗口的句柄，readiness 必须认它。
+		const form = state.form ?? state.hwnd;
+		if (form && state.rect?.width > 0 && state.rect?.height > 0) {
+			console.log(`靶窗口就绪: form=${form} button=${state.button} box=${state.box}`);
 			console.log(`客户区 ${state.rect.width}x${state.rect.height} @ (${state.rect.left},${state.rect.top})`);
 			console.log(`pid=${child.pid}（未加 -Activate，不会抢前台）`);
 			process.exit(0);

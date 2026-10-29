@@ -1,19 +1,23 @@
 {
   "name": "dsh-computer-use",
   "version": "0.1.0",
-  "description": "Codex-style computer use for DSH: screenshot the Windows desktop and drive the mouse and keyboard through a single `computer` tool.",
+  "description": "Computer use for DSH: read the Windows desktop (screenshots + accessibility tree) and act on it through window-targeted or foreground input, with a switchable mode.",
   "type": "module",
   "license": "MIT",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": "./lib/index.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": {
+      "default": "./client.js"
+    }
   },
   "files": [
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "client.js"
   ],
   "engines": {
     "node": ">=20"
@@ -62,6 +66,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
     }
   },
   "keywords": [

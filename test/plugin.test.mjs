@@ -22,6 +22,13 @@ function makeContext({ slot = 'present' } = {}) {
 		tools: { register: (definition) => { state.tools.push(definition); return () => {}; } },
 		systemPrompt: { section: (section) => { state.sections.push(section); return () => {}; } },
 		logger: { warn: (message) => { state.warnings.push(message); } },
+		// 子 fiber：这里没有真实服务图，直接当作依赖已就位执行回调
+		inject: (deps, callback) => {
+			state.injected ??= [];
+			state.injected.push(deps);
+			callback(ctx);
+			return {};
+		},
 		get: (serviceName) => {
 			if (serviceName !== 'computerUse' || slot === 'absent') return undefined;
 			if (slot === 'taken') {
@@ -55,8 +62,7 @@ test('激活时占用槽位、注册工具与提示词段落', () => {
 	const dispose = apply(ctx, Config({}));
 
 	assert.deepEqual(state.slotRegistrations, [name], '应以插件名占用槽位');
-	assert.equal(state.tools.length, 1);
-	assert.equal(state.tools[0].name, 'computer');
+	assert.deepEqual(state.tools.map((tool) => tool.name), ['computer_observe', 'computer_act']);
 	assert.equal(state.sections.length, 1);
 	assert.equal(state.sections[0].name, 'tool-computer-use');
 	assert.equal(typeof dispose, 'function');
@@ -67,8 +73,7 @@ test('宿主未挂载 computer-use 服务时照常注册工具', () => {
 	const dispose = apply(ctx, Config({}));
 
 	assert.deepEqual(state.slotRegistrations, [], '没有服务就没什么可占');
-	assert.equal(state.tools.length, 1, '工具必须仍然注册——否则插件形同未安装');
-	assert.equal(state.tools[0].name, 'computer');
+	assert.deepEqual(state.tools.map((tool) => tool.name), ['computer_observe', 'computer_act'], '工具必须仍然注册——否则插件形同未安装');
 	assert.equal(state.sections.length, 1);
 	assert.equal(typeof dispose, 'function');
 	assert.deepEqual(state.warnings, [], '服务缺失是正常组合，不该产生告警噪音');
@@ -83,6 +88,7 @@ test('提示词段落落在工具说明之后、SDK 之前，并写明安全边�
 	assert.match(section.text, /Computer use/u);
 	// 模型从工具描述里读不到"这是用户的活机器"，必须由提示词交代
 	assert.match(section.text, /user's own machine/u);
+	assert.match(section.text, /computer_observe/u, '提示词必须点名两个工具');
 	assert.match(section.text, /Never click or type anything that deletes data/u);
 });
 
@@ -124,4 +130,37 @@ test('槽位被抢占时放弃注册工具，并留下可排查的告警', () =>
 test('非法配置在激活期就抛出，而不是等到第一次调用', () => {
 	const { ctx } = makeContext();
 	assert.throws(() => apply(ctx, Config({ typingChunkDelayMs: 0 })), /至少为 1/u);
+});
+
+test('状态路由等 webServer 就位后才注册，而不是在 apply 时取一次', () => {
+	// 真实宿主里 webServer 比 tools / systemPrompt 晚挂载；apply 时取一次会拿到
+	// undefined，路由被静默跳过，面板读状态直接 404（实测踩过）。
+	const routes = [];
+	const callbacks = [];
+	const ctx = {
+		tools: { register: () => () => {} },
+		systemPrompt: { section: () => () => {} },
+		logger: { warn: () => {} },
+		inject: (deps, callback) => {
+			callbacks.push({ deps, callback });
+			return {};
+		},
+		get: () => undefined,
+	};
+
+	apply(ctx, Config({}));
+	assert.equal(callbacks.length, 1, '必须用 ctx.inject 等依赖');
+	assert.deepEqual(callbacks[0].deps, ['webServer']);
+	assert.deepEqual(routes, [], 'webServer 未就位时不应注册路由');
+
+	// 模拟 webServer 挂载后回调被调用
+	const scope = {
+		get: (name) => (name === 'webServer'
+			? { register: (route) => { routes.push(route); return () => {}; } }
+			: undefined),
+	};
+	callbacks[0].callback(scope);
+	assert.equal(routes.length, 1);
+	assert.equal(routes[0].path, '/dsh-computer-use/state');
+	assert.equal(routes[0].kind, 'exact');
 });

@@ -18,19 +18,22 @@ export const SECTION_ORDER = 3000;
 export const SECTION_TEXT = [
 	'# Computer use',
 	'',
-	'You can operate the live Windows desktop through the `computer` tool. The desktop is the user\'s own machine, shared with them, and visible to them while you work.',
+	'You can operate the live Windows desktop through two tools. The desktop is the user\'s own machine, shared with them, and visible to them while you work.',
+	'',
+	'- `computer_observe` reads: list target windows, capture the screen, capture one window. It never sends input.',
+	'- `computer_act` acts: click, type, press, scroll, drag, move, wait. It can only act through the channel the user\'s current input mode allows.',
 	'',
 	'Working rules:',
-	'- Take a `screenshot` before acting. Anything you learned from an earlier screenshot expires as soon as the user or another program changes the screen.',
-	'- Read coordinates off the screenshot; mouse actions take screen pixels. If the screenshot envelope reports a scale, apply the conversion it states instead of estimating.',
-	'- After any action that changes focus, check the `target` field in the result. It names the window that actually received the input. If it is not the window you meant, click that window and repeat the action — do not assume the text landed correctly.',
+	'- Look before you act: call `computer_observe` and read the result instead of assuming what is on screen. Anything learned from an earlier capture expires as soon as the user or another program changes the screen.',
+	'- In window mode every action needs `target`. The result reports whether the delivery should be trusted (`reliable`, `note`); when it should not, do not repeat the same call — report the limitation or switch approach.',
+	'- Coordinates are the pixels of the most recent capture of that target. The tool converts them; do not pre-scale.',
+	'- After an action, check `target` in the result: it names the window that actually received the input. If it is not the one you meant, stop and re-observe rather than repeating the action.',
 	'- Prefer a command-line or file-based route when one exists: it is faster, reproducible, and does not disturb the user\'s desktop. Use computer use for genuinely graphical targets.',
-	'- Batch work: one screenshot can justify several actions, so avoid re-capturing after every keystroke.',
 	'',
 	'Constraints:',
 	'- Never click or type anything that deletes data, sends messages or email, completes purchases, changes account or system security settings, or grants permissions, unless the user explicitly asked for that exact outcome.',
 	'- Do not work around a denied or failed action by trying an equivalent destructive action through another route.',
-	'- If an action would affect a window you did not intend to touch, stop and report what you see instead of retrying blindly.',
+	'- If the input mode forbids the channel you need, tell the user which mode you need and let them switch it. Do not treat a mode error as a retryable failure.',
 ].join('\n');
 
 /**

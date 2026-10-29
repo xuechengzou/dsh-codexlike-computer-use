@@ -17,6 +17,7 @@
  * 只声明本插件真正调用的符号，绑定失败时立刻抛出可读错误。
  */
 
+import { defineType } from './koffi-registry.js';
 import type { KoffiLibrary, KoffiModule, KoffiType } from './koffi-types.js';
 
 /** 光标/屏幕坐标点。 */
@@ -302,30 +303,31 @@ async function createWin32(): Promise<Win32> {
 		throw new Error('computer-use 需要 koffi 原生模块，但加载失败；请在插件目录执行 npm install koffi', { cause: error });
 	}
 
+
 	const user32 = koffi.load('user32.dll');
 	const gdi32 = koffi.load('gdi32.dll');
 
 	// ---- 结构体（x64 自然对齐） -------------------------------------------
-	const POINT: KoffiType = koffi.struct('POINT', { x: 'int32', y: 'int32' });
-	const RECT: KoffiType = koffi.struct('RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
-	const MOUSEINPUT: KoffiType = koffi.struct('MOUSEINPUT', {
+	const POINT: KoffiType = defineType('POINT', () => koffi.struct('POINT', { x: 'int32', y: 'int32' }));
+	const RECT: KoffiType = defineType('RECT', () => koffi.struct('RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' }));
+	const MOUSEINPUT: KoffiType = defineType('MOUSEINPUT', () => koffi.struct('MOUSEINPUT', {
 		dx: 'int32',
 		dy: 'int32',
 		mouseData: 'uint32',
 		dwFlags: 'uint32',
 		time: 'uint32',
 		dwExtraInfo: 'uint64',
-	});
-	const KEYBDINPUT: KoffiType = koffi.struct('KEYBDINPUT', {
+	}));
+	const KEYBDINPUT: KoffiType = defineType('KEYBDINPUT', () => koffi.struct('KEYBDINPUT', {
 		wVk: 'uint16',
 		wScan: 'uint16',
 		dwFlags: 'uint32',
 		time: 'uint32',
 		dwExtraInfo: 'uint64',
-	});
-	const HARDWAREINPUT: KoffiType = koffi.struct('HARDWAREINPUT', { uMsg: 'uint32', wParamL: 'uint16', wParamH: 'uint16' });
-	const INPUTUNION: KoffiType = koffi.union('INPUTUNION', { mi: MOUSEINPUT, ki: KEYBDINPUT, hi: HARDWAREINPUT });
-	const INPUT: KoffiType = koffi.struct('INPUT', { type: 'uint32', u: INPUTUNION });
+	}));
+	const HARDWAREINPUT: KoffiType = defineType('HARDWAREINPUT', () => koffi.struct('HARDWAREINPUT', { uMsg: 'uint32', wParamL: 'uint16', wParamH: 'uint16' }));
+	const INPUTUNION: KoffiType = defineType('INPUTUNION', () => koffi.union('INPUTUNION', { mi: MOUSEINPUT, ki: KEYBDINPUT, hi: HARDWAREINPUT }));
+	const INPUT: KoffiType = defineType('INPUT', () => koffi.struct('INPUT', { type: 'uint32', u: INPUTUNION }));
 
 	const inputStructSize = koffi.sizeof(INPUT);
 	if (inputStructSize !== 40) {

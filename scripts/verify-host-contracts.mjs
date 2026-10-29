@@ -125,6 +125,70 @@ if (hostRoot === undefined) {
 		console.log('✓ 宿主真实 defineTool 接受了本插件的参数与输出 schema');
 	}
 
+	console.log('\n=== apply 冒烟（与宿主加载同一条路径）===');
+	{
+		const tools = [];
+		const sections = [];
+		const routes = [];
+		const smokeCtx = {
+			tools: { register: (definition) => { tools.push(definition); return () => {}; } },
+			systemPrompt: { section: (section) => { sections.push(section); return () => {}; } },
+			logger: { warn: () => {} },
+			get: (name) => (name === 'webServer'
+				? { register: (route) => { routes.push(route); return () => {}; } }
+				: undefined),
+		};
+		try {
+			const { apply } = await import('../lib/index.js');
+			const dispose = apply(smokeCtx, {});
+			if (tools.length !== 2) failures.push(`apply 应注册两个工具，实际 ${tools.length}`);
+			if (sections.length !== 1) failures.push(`apply 应注册一个提示词段落，实际 ${sections.length}`);
+			if (routes.length !== 1) failures.push(`apply 应注册一条状态路由，实际 ${routes.length}`);
+			if (routes[0]?.path !== '/dsh-computer-use/state') failures.push(`状态路由路径不对：${routes[0]?.path}`);
+			if (typeof dispose !== 'function') failures.push('apply 应返回卸载函数');
+			console.log(`✓ apply 注册了 ${tools.length} 个工具、${sections.length} 个提示词段落、${routes.length} 条路由`);
+		} catch (error) {
+			failures.push(`apply 抛出: ${error.stack ?? error.message}`);
+		}
+	}
+
+	console.log('\n=== 两件套工具（computer_observe / computer_act）===');
+	const legacyCount = registered.length;
+	const newCtx = {
+		tools: { register: (definition) => { registered.push(definition); return () => {}; } },
+		systemPrompt: { section: () => () => {} },
+		computerUse: { register: () => async () => {} },
+		logger: { warn: () => {} },
+		get: () => undefined,
+	};
+
+	try {
+		const { createState } = await import('../lib/state.js');
+		const { registerTools } = await import('../lib/tools.js');
+		registerTools(newCtx, resolved, createState({ inputMode: resolved.inputMode, allowInput: resolved.allowInput }));
+	} catch (error) {
+		failures.push(`registerTools 抛出: ${error.stack ?? error.message}`);
+	}
+
+	const added = registered.slice(legacyCount);
+	if (added.length !== 2) {
+		failures.push(`应注册两个工具，实际 ${added.length}`);
+	} else {
+		const names = added.map((tool) => tool.name);
+		if (names.join(',') !== 'computer_observe,computer_act') failures.push(`工具名不符合预期：${names.join(',')}`);
+		const [observe, act] = added;
+		if (observe.timeoutMs !== 180_000) failures.push('computer_observe 的 timeoutMs 不是 180000');
+		if (observe.parameters?.properties?.region?.type !== 'object') failures.push('computer_observe 的 region 没编译成对象参数');
+		if (observe.parameters?.required !== undefined) failures.push('computer_observe 不应有必填参数');
+		if (act.parameters?.properties?.action?.enum === undefined) failures.push('computer_act 的 action 枚举缺失');
+		if ((act.parameters?.required ?? []).join(',') !== 'action') failures.push(`computer_act 的必填项应只有 action，实际 ${JSON.stringify(act.parameters?.required)}`);
+		for (const tool of added) {
+			if (typeof tool.output?.render !== 'function') failures.push(`${tool.name} 缺少 render`);
+			if (tool.output?.schema === undefined) failures.push(`${tool.name} 缺少输出 schema`);
+		}
+		console.log(`✓ 两个工具都通过宿主编译：${names.join(', ')}`);
+	}
+
 	console.log('\n=== 结论 ===');
 	if (failures.length === 0) {
 		console.log('宿主契约校验全部通过');

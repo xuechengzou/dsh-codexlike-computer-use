@@ -4,6 +4,12 @@
 
 import z from '@deepseek-ai/schemastery';
 
+/** 允许的输入模式；顺序即界面上的展示顺序。 */
+export const INPUT_MODES = ['window', 'foreground', 'both'] as const;
+
+/** 输入模式。 */
+export type InputMode = (typeof INPUT_MODES)[number];
+
 /** 配置 schema；profile 的 cordis.patch.yml 可逐项覆盖。 */
 export const Config = z.object({
 	/** 总开关。关闭后不再注册工具与提示词段。 */
@@ -21,6 +27,15 @@ export const Config = z.object({
 	 * 只有部署方显式打开本项，模型才有前台模式可用。
 	 */
 	allowForegroundInput: z.boolean().default(false),
+
+	/**
+	 * 输入模式：`window`（默认，只走后台投递）、`foreground`（真实鼠标键盘）、
+	 * `both`（由模型按次选择）。
+	 *
+	 * 这是**部署默认值**：设置界面可以把它切成别的值并立即生效，但重启后
+	 * 从这里恢复。`window` 之所以是默认，是因为前台模式会真的移动用户的光标。
+	 */
+	inputMode: z.string().default('window'),
 
 	/** 每个 SendInput 批次承载的 UTF-16 单元数。 */
 	typingChunkSize: z.number().default(8),
@@ -79,6 +94,12 @@ export const Config = z.object({
 	 */
 	backgroundCaptureEnabled: z.boolean().default(true),
 
+	/** 可访问性树最多输出多少个节点（默认 400）。 */
+	treeNodeLimit: z.number().default(400),
+
+	/** 可访问性树的最大层级（默认 12）。 */
+	treeDepthLimit: z.number().default(12),
+
 	/** 拒绝注入的组合键写法，例如 `["ctrl+alt+Delete"]`。大小写与分隔符不敏感。 */
 	deniedKeys: z.array(z.string()).default([]),
 
@@ -97,6 +118,7 @@ export interface ConfigValues {
 	enabled: boolean;
 	allowInput: boolean;
 	allowForegroundInput: boolean;
+	inputMode: string;
 	typingChunkSize: number;
 	typingChunkDelayMs: number;
 	settleMs: number;
@@ -109,6 +131,8 @@ export interface ConfigValues {
 	pngLevel: number;
 	windowListLimit: number;
 	backgroundCaptureEnabled: boolean;
+	treeNodeLimit: number;
+	treeDepthLimit: number;
 	deniedKeys: string[];
 	requireApproval: boolean;
 }
@@ -139,6 +163,8 @@ export function assertConfig(config: ConfigValues): void {
 	positive('maxWaitMs', config.maxWaitMs);
 	positive('maxTextLength', config.maxTextLength);
 	positive('windowListLimit', config.windowListLimit);
+	positive('treeNodeLimit', config.treeNodeLimit);
+	positive('treeDepthLimit', config.treeDepthLimit);
 
 	if (config.pngLevel < 0 || config.pngLevel > 9) {
 		throw new Error(`computer-use: pngLevel 必须在 0–9 之间，收到 ${config.pngLevel}`);
@@ -148,5 +174,8 @@ export function assertConfig(config: ConfigValues): void {
 	}
 	if (config.allowInput && config.typingChunkDelayMs < 1) {
 		throw new Error('computer-use: typingChunkDelayMs 至少为 1；0 延迟会让系统丢弃注入的字符');
+	}
+	if (!(INPUT_MODES as readonly string[]).includes(config.inputMode)) {
+		throw new Error(`computer-use: inputMode 只能是 ${INPUT_MODES.join(' / ')}，收到 ${JSON.stringify(config.inputMode)}`);
 	}
 }
